@@ -44,7 +44,7 @@ ok "Removed temp files"
 
 # 4. Remove statusLine and hooks from settings.json (preserve other keys)
 if [[ -f "$SETTINGS" ]] && command -v jq &>/dev/null; then
-  local changed=false
+  changed=false
   cp "$SETTINGS" "$SETTINGS.pre-uninstall.bak"
 
   if jq -e '.statusLine' "$SETTINGS" &>/dev/null; then

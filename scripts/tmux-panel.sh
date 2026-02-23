@@ -282,6 +282,8 @@ trap cleanup INT TERM EXIT
 tput civis 2>/dev/null
 
 STALE_COUNT=0
+BOOT_TS=$(date +%s)
+BOOT_GRACE=15  # seconds: skip stale check during startup
 
 while true; do
   if [[ -n "$PANEL_ID" ]]; then
@@ -290,16 +292,22 @@ while true; do
       kill_session
     fi
     # Auto-exit: if Claude (node) is no longer running in pane 0.0
-    pane_cmd=$(tmux display-message -p -t "${PANEL_ID}:0.0" '#{pane_current_command}' 2>/dev/null || echo "")
-    if [[ -n "$pane_cmd" && "$pane_cmd" != "node" ]]; then
-      STALE_COUNT=$((STALE_COUNT + 1))
-      if (( STALE_COUNT >= 3 )); then
-        kill_session
+    # Grace period: skip check during first BOOT_GRACE seconds (claude loading)
+    now_check=$(($(date +%s) - BOOT_TS))
+    if (( now_check >= BOOT_GRACE )); then
+      pane_cmd=$(tmux display-message -p -t "${PANEL_ID}:0.0" '#{pane_current_command}' 2>/dev/null || echo "")
+      if [[ -n "$pane_cmd" && "$pane_cmd" != "node" ]]; then
+        STALE_COUNT=$((STALE_COUNT + 1))
+        if (( STALE_COUNT >= 3 )); then
+          kill_session
+        fi
+      else
+        STALE_COUNT=0
       fi
-    else
-      STALE_COUNT=0
     fi
   fi
+  # Force exit copy-mode if user accidentally scrolled on this pane
+  [[ -n "$PANEL_ID" ]] && tmux copy-mode -q -t "${PANEL_ID}:0.1" 2>/dev/null || true
   output=$(render 2>/dev/null || true)
   clear
   echo -e "$output"
