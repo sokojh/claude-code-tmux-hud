@@ -426,6 +426,8 @@ async function getUsage() {
 // -- Render --
 function fmtDuration(start) {
   if (!start) return '';
+  if (!(start instanceof Date)) start = new Date(start);
+  if (isNaN(start.getTime())) return '';
   const m = Math.floor((Date.now() - start.getTime()) / 60000);
   if (m < 1) return '<1m';
   if (m < 60) return `${m}m`;
@@ -511,7 +513,9 @@ function renderAgents(tr) {
   if (!show.length) return null;
   return show.map(a => {
     const icon = a.status === 'running' ? yellow('\u25d0') : green('\u2713');
-    const ms = ((a.endTime ?? new Date()).getTime()) - a.startTime.getTime();
+    const end = a.endTime instanceof Date ? a.endTime : (a.endTime ? new Date(a.endTime) : new Date());
+    const st = a.startTime instanceof Date ? a.startTime : new Date(a.startTime);
+    const ms = end.getTime() - st.getTime();
     const el = ms < 1000 ? '<1s' : ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
     return `${icon} ${magenta(a.type)}${a.model ? ` ${dim(`[${a.model}]`)}` : ''}${a.description ? dim(`: ${a.description.slice(0, 40)}`) : ''} ${dim(`(${el})`)}`;
   }).join('\n');

@@ -59,7 +59,7 @@ check_deps() {
 # 2. Download scripts
 download_scripts() {
   mkdir -p "$INSTALL_DIR"
-  local files=("statusline.mjs" "tmux-panel.sh" "claude-tmux.sh" "checkpoint.sh" "undo.sh")
+  local files=("statusline.mjs" "tmux-panel.sh" "claude-tmux.sh" "checkpoint.sh" "undo.sh" "session-picker.mjs")
   for f in "${files[@]}"; do
     info "Downloading $f..."
     if curl -fsSL "$BASE_URL/scripts/$f" -o "$INSTALL_DIR/$f"; then
@@ -202,6 +202,8 @@ main() {
   echo "Commands:"
   echo "  ct                 Launch Claude Code with HUD"
   echo "  ct work            Named session"
+  echo "  ct ls              Pick & resume a session"
+  echo "  ct last            Continue most recent session"
   echo "  ct --help          Show help"
   echo "  ct --update        Update to latest version"
   echo ""

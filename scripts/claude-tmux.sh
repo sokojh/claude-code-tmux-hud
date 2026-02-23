@@ -1,6 +1,9 @@
 #!/bin/bash
 # Claude Code with tmux side panel dashboard
 # Usage: ct [session-name] [panel-width]
+#        ct ls [query]       — Pick & resume a session via TUI
+#        ct resume [query]   — Alias for ls
+#        ct last [width]     — Continue most recent session
 #
 # Session isolation: Each tmux session gets its own state file via CLAUDE_PANEL_ID
 #
@@ -8,6 +11,9 @@
 #   ct                           # Default session, 38-col panel
 #   ct work 42                   # Named session, wider panel
 #   ct query-gom                 # Named session for project
+#   ct ls                        # Open session picker TUI
+#   ct ls databricks             # Picker with initial query
+#   ct last                      # Resume most recent session
 
 set -euo pipefail
 
@@ -54,6 +60,13 @@ auto_update() {
 
 auto_update "$@"
 
+# Resolve script directory (works with symlinks)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+PICKER_SCRIPT="$SCRIPT_DIR/session-picker.mjs"
+RESUME_SESSION_ID=""
+RESUME_PROJECT_PATH=""
+CONTINUE_SESSION=""
+
 case "${1:-}" in
   --help|-h)
     cat <<'HELP'
@@ -65,6 +78,11 @@ Arguments:
   session-name    Name for the tmux session (default: claude-N)
   panel-width     Width of the side panel in columns (default: 38)
 
+Subcommands:
+  ls [query]      Open session picker TUI, select to resume
+  resume [query]  Alias for ls
+  last [width]    Continue most recent session (claude --continue)
+
 Options:
   --help, -h      Show this help message
   --version       Show version number
@@ -74,6 +92,9 @@ Examples:
   ct                      # Auto-named session
   ct work                 # Named "work" session
   ct project 42           # Named session with wider panel
+  ct ls                   # Pick a session to resume
+  ct ls databricks        # Pick with initial search query
+  ct last                 # Continue most recent session
 HELP
     exit 0
     ;;
@@ -86,12 +107,61 @@ HELP
     curl -fsSL "https://raw.githubusercontent.com/sokojh/claude-code-tmux-hud/main/install.sh" | bash -s -- --update
     exit $?
     ;;
+  ls|resume)
+    # Session picker: launch TUI, capture "sessionId\tprojectPath"
+    if [[ ! -f "$PICKER_SCRIPT" ]]; then
+      echo "Error: session-picker.mjs not found at $PICKER_SCRIPT"
+      exit 1
+    fi
+    PICKER_QUERY="${2:-}"
+    PICKER_OUTPUT=$(node "$PICKER_SCRIPT" "$PICKER_QUERY") || {
+      # User cancelled or no sessions
+      exit 0
+    }
+    if [[ -z "$PICKER_OUTPUT" ]]; then
+      exit 0
+    fi
+    # Parse tab-separated output: sessionId \t projectPath
+    RESUME_SESSION_ID=$(echo "$PICKER_OUTPUT" | cut -f1)
+    RESUME_PROJECT_PATH=$(echo "$PICKER_OUTPUT" | cut -f2)
+    # Fall through to session creation with resume flag
+    shift  # remove 'ls'/'resume'
+    shift 2>/dev/null || true  # remove query if present
+    ;;
+  last)
+    # Continue most recent session (ct last [width])
+    CONTINUE_SESSION="true"
+    shift  # remove 'last'
+    ;;
+  --resume-session)
+    # Internal: called after picker selection (for recursive invocation)
+    RESUME_SESSION_ID="${2:-}"
+    shift 2
+    ;;
+  --continue-session)
+    # Internal: continue most recent session
+    CONTINUE_SESSION="true"
+    shift
+    ;;
 esac
 
-PANEL_WIDTH="${2:-38}"
+# Panel width: after subcommand shifts, check remaining positional args
+# Normal: ct [name] [width] → $1=name, $2=width
+# After subcommand shift: $1=width or empty
+if [[ -n "$RESUME_SESSION_ID" || "$CONTINUE_SESSION" == "true" ]]; then
+  PANEL_WIDTH="${1:-38}"
+else
+  PANEL_WIDTH="${2:-38}"
+fi
+[[ "$PANEL_WIDTH" =~ ^[0-9]+$ ]] || PANEL_WIDTH=38
 
-# Auto-generate unique session name if not provided
-if [[ -n "${1:-}" ]]; then
+# Auto-generate unique session name
+if [[ -n "$RESUME_SESSION_ID" ]]; then
+  # For resumed sessions, use a short identifier from the session ID
+  SESSION_NAME="resume-${RESUME_SESSION_ID:0:8}"
+elif [[ "$CONTINUE_SESSION" == "true" ]]; then
+  SESSION_NAME="continue-1"
+elif [[ -n "${1:-}" && "${1:-}" != "ls" && "${1:-}" != "resume" && "${1:-}" != "last" ]]; then
   SESSION_NAME="$1"
 else
   N=1
@@ -101,8 +171,6 @@ else
   SESSION_NAME="claude-${N}"
 fi
 
-# Resolve script directory (works with symlinks)
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
 PANEL_SCRIPT="$SCRIPT_DIR/tmux-panel.sh"
 
 # Validate panel script exists
@@ -120,6 +188,18 @@ if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
   echo "Session '$SESSION_NAME' already exists. Attaching..."
   tmux attach -t "$SESSION_NAME"
   exit 0
+fi
+
+# Build Claude command based on mode (agf-style: cd to project dir first)
+CLAUDE_CMD="claude"
+if [[ -n "$RESUME_SESSION_ID" ]]; then
+  if [[ -n "${RESUME_PROJECT_PATH:-}" && -d "${RESUME_PROJECT_PATH:-}" ]]; then
+    CLAUDE_CMD="cd '${RESUME_PROJECT_PATH}' && claude --resume '$RESUME_SESSION_ID'"
+  else
+    CLAUDE_CMD="claude --resume '$RESUME_SESSION_ID'"
+  fi
+elif [[ "$CONTINUE_SESSION" == "true" ]]; then
+  CLAUDE_CMD="claude --continue"
 fi
 
 # Create new tmux session
@@ -147,7 +227,7 @@ tmux set-option -t "$SESSION_NAME:0.1" -p history-limit 0
 tmux send-keys -t "$SESSION_NAME:0.1" "export CLAUDE_PANEL_ID='$SESSION_NAME' && $PANEL_SCRIPT" Enter
 
 # Left pane (index 0): start claude with panel ID; kill session on exit
-tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_PANEL_ID='$SESSION_NAME' CLAUDE_STATUSLINE_QUIET=1 && clear && claude; tmux kill-session -t '$SESSION_NAME' 2>/dev/null" Enter
+tmux send-keys -t "$SESSION_NAME:0.0" "export CLAUDE_PANEL_ID='$SESSION_NAME' CLAUDE_STATUSLINE_QUIET=1 && clear && $CLAUDE_CMD; tmux kill-session -t '$SESSION_NAME' 2>/dev/null" Enter
 
 # Focus left pane (Claude Code)
 tmux select-pane -t "$SESSION_NAME:0.0"

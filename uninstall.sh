@@ -25,7 +25,7 @@ if (( active > 0 )); then
 fi
 
 # 2. Remove scripts (files only, preserve directory)
-for f in statusline.mjs tmux-panel.sh claude-tmux.sh checkpoint.sh undo.sh; do
+for f in statusline.mjs tmux-panel.sh claude-tmux.sh checkpoint.sh undo.sh session-picker.mjs; do
   if [[ -f "$INSTALL_DIR/$f" ]]; then
     rm -f "$INSTALL_DIR/$f"
     ok "Removed $f"
