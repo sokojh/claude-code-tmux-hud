@@ -71,8 +71,8 @@ H() { printf "\n  ${CYN}${BOLD}%b${RST}\n" "$1"; }
 
 render() {
   # Adaptive layout: calculate item limits based on terminal height
-  local term_h
-  term_h=$(tput lines 2>/dev/null || echo 50)
+  # NOTE: TERM_H is set in the main loop (tput fails inside subshell)
+  local term_h="${TERM_H:-50}"
   # Fixed sections (header+session+usage+repo) ≈ 20 lines
   local avail=$((term_h - 20))
   (( avail < 5 )) && avail=5
@@ -340,6 +340,8 @@ while true; do
   fi
   # Force exit copy-mode if user accidentally scrolled on this pane
   [[ -n "$PANEL_ID" ]] && tmux copy-mode -q -t "${PANEL_ID}:0.1" 2>/dev/null || true
+  # Read terminal height here (tput fails inside subshell/pipe)
+  TERM_H=$(tput lines 2>/dev/null || echo 50)
   output=$(render 2>/dev/null || true)
   clear
   echo -e "$output"
