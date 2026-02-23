@@ -70,6 +70,29 @@ P() { printf "  %b\n" "$1"; }
 H() { printf "\n  ${CYN}${BOLD}%b${RST}\n" "$1"; }
 
 render() {
+  # Adaptive layout: calculate item limits based on terminal height
+  local term_h
+  term_h=$(tput lines 2>/dev/null || echo 50)
+  # Fixed sections (header+session+usage+repo) ≈ 20 lines
+  local avail=$((term_h - 20))
+  (( avail < 5 )) && avail=5
+
+  # Distribute available lines among variable sections
+  local LIM_TODO LIM_MCP LIM_TOOLS LIM_CHANGES LIM_AGENTS
+  if (( avail >= 30 )); then
+    # Full mode
+    LIM_TODO=6; LIM_MCP=6; LIM_TOOLS=5; LIM_CHANGES=6; LIM_AGENTS=4
+  elif (( avail >= 20 )); then
+    # Compact mode
+    LIM_TODO=4; LIM_MCP=3; LIM_TOOLS=3; LIM_CHANGES=4; LIM_AGENTS=2
+  elif (( avail >= 12 )); then
+    # Minimal mode
+    LIM_TODO=2; LIM_MCP=0; LIM_TOOLS=2; LIM_CHANGES=2; LIM_AGENTS=0
+  else
+    # Ultra-compact
+    LIM_TODO=1; LIM_MCP=0; LIM_TOOLS=1; LIM_CHANGES=1; LIM_AGENTS=0
+  fi
+
   printf "\n"
   P "${BOLD}${CYN}Claude Code HUD${RST}"
   P "${DIM}$(date '+%H:%M:%S')${RST}"
@@ -151,7 +174,7 @@ render() {
     local completed
     completed=$(panel '[todos[] | select(.status == "completed")] | length')
     P "${DIM}${completed}/${total_todos} done${RST}"
-    panel 'todos[] | "\(.status)\t\(.subject // .content // "task")"' 2>/dev/null | head -6 | while IFS=$'\t' read -r status content; do
+    panel 'todos[] | "\(.status)\t\(.subject // .content // "task")"' 2>/dev/null | head -"$LIM_TODO" | while IFS=$'\t' read -r status content; do
       local icon
       case "$status" in
         completed)   icon="${GRN}v${RST}" ;;
@@ -192,23 +215,28 @@ render() {
     fi
   fi
 
-  # -- MCP
-  H "MCP"
-  local names
-  names=$(panel 'configs.mcpNames[]? // empty' 2>/dev/null)
-  if [[ -n "$names" ]]; then
-    while IFS= read -r name; do
-      [[ -z "$name" ]] && continue
-      P "${GRN}*${RST} ${name}"
-    done <<< "$names"
-  else
-    P "${DIM}None${RST}"
+  # -- MCP (hidden in minimal/ultra-compact mode)
+  if (( LIM_MCP > 0 )); then
+    H "MCP"
+    local names
+    names=$(panel 'configs.mcpNames[]? // empty' 2>/dev/null)
+    if [[ -n "$names" ]]; then
+      local mcp_count=0
+      while IFS= read -r name; do
+        [[ -z "$name" ]] && continue
+        (( mcp_count >= LIM_MCP )) && { P "${DIM}+more${RST}"; break; }
+        P "${GRN}*${RST} ${name}"
+        mcp_count=$((mcp_count + 1))
+      done <<< "$names"
+    else
+      P "${DIM}None${RST}"
+    fi
   fi
 
   # -- Tools
   H "Tools"
   local running
-  running=$(panel '[tools[] | select(.status == "running")] | .[:3][] | .name' 2>/dev/null)
+  running=$(panel '[tools[] | select(.status == "running")] | .[:'$LIM_TOOLS'][] | .name' 2>/dev/null)
   if [[ -n "$running" ]]; then
     while IFS= read -r name; do
       [[ -z "$name" || "$name" == "null" ]] && continue
@@ -217,7 +245,7 @@ render() {
   fi
 
   local tool_data
-  tool_data=$(panel '[tools[] | select(.status != "running")] | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count) | .[:5][] | "\(.name)\t\(.count)"' 2>/dev/null)
+  tool_data=$(panel '[tools[] | select(.status != "running")] | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count) | .[:'$LIM_TOOLS'][] | "\(.name)\t\(.count)"' 2>/dev/null)
   if [[ -n "$tool_data" ]]; then
     while IFS=$'\t' read -r name count; do
       [[ -z "$name" ]] && continue
@@ -238,7 +266,7 @@ render() {
       H "Changes (${stack_len})"
       local now_ts
       now_ts=$(date +%s)
-      jq -r '.[:6][] | "\(.tool)\t\(.file)\t\(.timestamp)\t\(.is_new)"' "$stack_file" 2>/dev/null | {
+      jq -r '.[:'$LIM_CHANGES'][] | "\(.tool)\t\(.file)\t\(.timestamp)\t\(.is_new)"' "$stack_file" 2>/dev/null | {
         local idx=0
         while IFS=$'\t' read -r tool filepath ts is_new; do
           idx=$((idx + 1))
@@ -260,12 +288,13 @@ render() {
     fi
   fi
 
-  # -- Agents (only if any)
+  # -- Agents (hidden in minimal/ultra-compact mode)
+  if (( LIM_AGENTS > 0 )); then
   local agent_data
   agent_data=$(panel 'agents[] | "\(.status)\t\(.type)\t\(.description // "")"' 2>/dev/null)
   if [[ -n "$agent_data" ]]; then
     H "Agents"
-    echo "$agent_data" | tail -4 | while IFS=$'\t' read -r status type desc; do
+    echo "$agent_data" | tail -"$LIM_AGENTS" | while IFS=$'\t' read -r status type desc; do
       [[ -z "$type" ]] && continue
       local icon="${GRN}v${RST}"
       [[ "$status" == "running" ]] && icon="${YLW}>${RST}"
@@ -273,6 +302,7 @@ render() {
       [[ -n "$desc" && "$desc" != "null" ]] && d=" ${DIM}$(trunc "$desc" 20)${RST}"
       P "${icon} ${MAG}${type}${RST}${d}"
     done
+  fi
   fi
 
   printf "\n"
