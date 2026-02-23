@@ -13,7 +13,12 @@
 set -euo pipefail
 
 CHECKPOINT_DIR="$HOME/.claude/.tmux-hud-cache/checkpoints"
-STACK_FILE="$CHECKPOINT_DIR/stack.json"
+PANEL_ID="${CLAUDE_PANEL_ID:-}"
+if [[ -n "$PANEL_ID" ]]; then
+  STACK_FILE="$CHECKPOINT_DIR/stack-${PANEL_ID}.json"
+else
+  STACK_FILE="$CHECKPOINT_DIR/stack.json"
+fi
 MAX_CHECKPOINTS=20
 
 # Read tool input from stdin (Claude Code passes JSON)

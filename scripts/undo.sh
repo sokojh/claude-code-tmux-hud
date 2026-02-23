@@ -5,7 +5,12 @@
 set -euo pipefail
 
 CHECKPOINT_DIR="$HOME/.claude/.tmux-hud-cache/checkpoints"
-STACK_FILE="$CHECKPOINT_DIR/stack.json"
+PANEL_ID="${CLAUDE_PANEL_ID:-}"
+if [[ -n "$PANEL_ID" ]]; then
+  STACK_FILE="$CHECKPOINT_DIR/stack-${PANEL_ID}.json"
+else
+  STACK_FILE="$CHECKPOINT_DIR/stack.json"
+fi
 
 RED='\033[31m'; GRN='\033[32m'; YLW='\033[33m'; CYN='\033[36m'; RST='\033[0m'; DIM='\033[2m'
 

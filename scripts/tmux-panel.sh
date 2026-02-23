@@ -228,7 +228,9 @@ render() {
   fi
 
   # -- Changes (undo stack)
-  local stack_file="$HOME/.claude/.tmux-hud-cache/checkpoints/stack.json"
+  local stack_file="$HOME/.claude/.tmux-hud-cache/checkpoints/stack-${PANEL_ID}.json"
+  # Fallback to global stack if no panel ID
+  [[ -z "$PANEL_ID" ]] && stack_file="$HOME/.claude/.tmux-hud-cache/checkpoints/stack.json"
   if [[ -f "$stack_file" ]]; then
     local stack_len
     stack_len=$(jq 'length' "$stack_file" 2>/dev/null || echo "0")
