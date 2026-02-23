@@ -115,12 +115,12 @@ configure_hooks() {
     return
   fi
 
-  # Add hook in new format: {matcher: {tools: [...]}, hooks: [{type, command}]}
+  # Add hook: {matcher: "Edit|Write", hooks: [{type, command}]}
   jq --arg cmd "$hook_cmd" '
     .hooks //= {} |
     .hooks.PreToolUse //= [] |
     .hooks.PreToolUse += [{
-      matcher: {tools: ["Edit", "Write"]},
+      matcher: "Edit|Write",
       hooks: [{type: "command", command: $cmd}]
     }]
   ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
