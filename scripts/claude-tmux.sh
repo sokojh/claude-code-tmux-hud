@@ -125,6 +125,9 @@ fi
 # Create new tmux session
 tmux new-session -d -s "$SESSION_NAME" -x "$(tput cols)" -y "$(tput lines)"
 
+# Enable mouse mode (scroll, pane select, resize)
+tmux set-option -t "$SESSION_NAME" mouse on
+
 # Set session-level env var for isolation
 tmux set-environment -t "$SESSION_NAME" CLAUDE_PANEL_ID "$SESSION_NAME"
 
