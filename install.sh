@@ -59,7 +59,7 @@ check_deps() {
 # 2. Download scripts
 download_scripts() {
   mkdir -p "$INSTALL_DIR"
-  local files=("statusline.mjs" "tmux-panel.sh" "claude-tmux.sh")
+  local files=("statusline.mjs" "tmux-panel.sh" "claude-tmux.sh" "checkpoint.sh" "undo.sh")
   for f in "${files[@]}"; do
     info "Downloading $f..."
     if curl -fsSL "$BASE_URL/scripts/$f" -o "$INSTALL_DIR/$f"; then
@@ -101,7 +101,33 @@ configure_settings() {
   fi
 }
 
-# 4. Setup shell alias
+# 4. Configure hooks (PreToolUse checkpoint for undo)
+configure_hooks() {
+  if [[ ! -f "$SETTINGS" ]]; then return; fi
+
+  local hook_cmd="$INSTALL_DIR/checkpoint.sh"
+
+  # Check if hooks.PreToolUse already has our checkpoint
+  local has_hook
+  has_hook=$(jq -r '.hooks.PreToolUse // [] | map(select(.command == "'"$hook_cmd"'")) | length' "$SETTINGS" 2>/dev/null || echo "0")
+  if (( has_hook > 0 )); then
+    info "Checkpoint hook already configured, skipping"
+    return
+  fi
+
+  # Add our hook (preserve existing hooks)
+  local hook_entry
+  hook_entry=$(jq -n --arg cmd "$hook_cmd" '{matcher: "Edit|Write", command: $cmd}')
+
+  jq --argjson entry "$hook_entry" '
+    .hooks //= {} |
+    .hooks.PreToolUse //= [] |
+    .hooks.PreToolUse += [$entry]
+  ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+  ok "Checkpoint hook added (undo support)"
+}
+
+# 5. Setup shell alias
 setup_alias() {
   local alias_line="alias ct='$INSTALL_DIR/claude-tmux.sh'"
   local comment="# Claude Code tmux HUD"
@@ -156,9 +182,11 @@ main() {
 
   if [[ "$IS_UPDATE" == "false" ]]; then
     configure_settings
+    configure_hooks
     setup_alias
   else
     configure_settings
+    configure_hooks
   fi
 
   # Clear update check cache so next ct run doesn't show stale notification

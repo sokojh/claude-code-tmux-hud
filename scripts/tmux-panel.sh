@@ -227,6 +227,37 @@ render() {
     P "${DIM}No activity${RST}"
   fi
 
+  # -- Changes (undo stack)
+  local stack_file="$HOME/.claude/.tmux-hud-cache/checkpoints/stack.json"
+  if [[ -f "$stack_file" ]]; then
+    local stack_len
+    stack_len=$(jq 'length' "$stack_file" 2>/dev/null || echo "0")
+    if (( stack_len > 0 )); then
+      H "Changes (${stack_len})"
+      local now_ts
+      now_ts=$(date +%s)
+      jq -r '.[:6][] | "\(.tool)\t\(.file)\t\(.timestamp)\t\(.is_new)"' "$stack_file" 2>/dev/null | {
+        local idx=0
+        while IFS=$'\t' read -r tool filepath ts is_new; do
+          idx=$((idx + 1))
+          [[ -z "$tool" ]] && continue
+          local fname="${filepath##*/}"
+          local ago=""
+          if [[ -n "$ts" && "$ts" != "null" ]]; then
+            local diff_s=$((now_ts - ts))
+            if (( diff_s < 60 )); then ago="${diff_s}s"
+            elif (( diff_s < 3600 )); then ago="$((diff_s / 60))m"
+            else ago="$((diff_s / 3600))h"; fi
+          fi
+          local op="${CYN}${tool}${RST}"
+          [[ "$is_new" == "true" ]] && op="${GRN}+New${RST}"
+          P "${DIM}${idx}|${RST} ${op} ${WHT}$(trunc "$fname" 18)${RST} ${DIM}${ago}${RST}"
+        done
+      }
+      P "${DIM}Ctrl-b u → undo last${RST}"
+    fi
+  fi
+
   # -- Agents (only if any)
   local agent_data
   agent_data=$(panel 'agents[] | "\(.status)\t\(.type)\t\(.description // "")"' 2>/dev/null)
