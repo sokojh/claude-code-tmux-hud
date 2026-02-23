@@ -12,6 +12,47 @@
 set -euo pipefail
 
 VERSION="1.0.0"
+REPO="sokojh/claude-code-tmux-hud"
+UPDATE_CHECK_CACHE="$HOME/.claude/.tmux-hud-cache/update-check"
+UPDATE_CHECK_INTERVAL=86400  # 24 hours
+
+# Auto-update: check remote version and update if newer (cached 24h)
+auto_update() {
+  local cache_dir="$HOME/.claude/.tmux-hud-cache"
+  mkdir -p "$cache_dir" 2>/dev/null || return
+
+  # Skip if checked recently
+  if [[ -f "$UPDATE_CHECK_CACHE" ]]; then
+    local last_check now
+    last_check=$(cat "$UPDATE_CHECK_CACHE" 2>/dev/null || echo "0")
+    now=$(date +%s)
+    if (( now - last_check < UPDATE_CHECK_INTERVAL )); then
+      return
+    fi
+  fi
+
+  # Fetch remote version (with short timeout to not block launch)
+  local remote_ver
+  remote_ver=$(curl -fsSL --connect-timeout 2 --max-time 4 \
+    "https://raw.githubusercontent.com/$REPO/main/VERSION" 2>/dev/null | tr -d '[:space:]') || true
+
+  # Record check timestamp
+  date +%s > "$UPDATE_CHECK_CACHE" 2>/dev/null
+
+  # Compare and auto-update if different
+  if [[ -n "$remote_ver" && "$remote_ver" != "$VERSION" ]]; then
+    printf '\033[33m[auto-update]\033[0m v%s -> v%s\n' "$VERSION" "$remote_ver"
+    if curl -fsSL "https://raw.githubusercontent.com/$REPO/main/install.sh" | bash -s -- --update; then
+      printf '\033[32m[ok]\033[0m Updated. Launching...\n'
+      # Re-exec self with the updated script (pass original args through)
+      exec "$0" "$@"
+    else
+      printf '\033[31m[warn]\033[0m Update failed, continuing with current version\n'
+    fi
+  fi
+}
+
+auto_update "$@"
 
 case "${1:-}" in
   --help|-h)

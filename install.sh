@@ -161,6 +161,9 @@ main() {
     configure_settings
   fi
 
+  # Clear update check cache so next ct run doesn't show stale notification
+  rm -f "$HOME/.claude/.tmux-hud-cache/update-check" "$HOME/.claude/.tmux-hud-cache/update-check.result" 2>/dev/null
+
   echo ""
   printf "${BOLD}${GRN}Installation complete!${RST}\n"
   echo ""
