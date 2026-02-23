@@ -116,7 +116,8 @@ function parseTranscript(transcriptPath) {
   const prevOffset = (cache && cache.path === transcriptPath) ? (cache.size || 0) : 0;
   const toolMap = new Map();
   const agentMap = new Map();
-  let latestTodos = [];
+  const taskMap = new Map();       // TaskCreate/TaskUpdate system (modern)
+  let latestTodos = [];            // TodoWrite system (legacy fallback)
   let sessionStart = null;
 
   // Restore previous state if incremental
@@ -125,6 +126,8 @@ function parseTranscript(transcriptPath) {
     for (const t of (cache.result.tools || [])) toolMap.set(t.id, { ...t, startTime: new Date(t.startTime), endTime: t.endTime ? new Date(t.endTime) : undefined });
     for (const a of (cache.result.agents || [])) agentMap.set(a.id, { ...a, startTime: new Date(a.startTime), endTime: a.endTime ? new Date(a.endTime) : undefined });
     latestTodos = cache.result.todos || [];
+    // Restore task map from cached _tasks
+    for (const t of (cache.result._tasks || [])) taskMap.set(t.id, t);
   }
 
   try {
@@ -150,6 +153,18 @@ function parseTranscript(transcriptPath) {
               agentMap.set(block.id, { id: block.id, type: block.input?.subagent_type ?? 'unknown', model: block.input?.model, description: block.input?.description, status: 'running', startTime: ts });
             } else if (block.name === 'TodoWrite') {
               if (block.input?.todos && Array.isArray(block.input.todos)) latestTodos = [...block.input.todos];
+            } else if (block.name === 'TaskCreate') {
+              // Modern task system: track task creation (id assigned in tool_result)
+              const pendingId = `_pending_${block.id}`;
+              taskMap.set(pendingId, { id: pendingId, _toolUseId: block.id, subject: block.input?.subject ?? 'task', status: 'pending', description: block.input?.description });
+            } else if (block.name === 'TaskUpdate') {
+              // Modern task system: update task status
+              const tid = block.input?.taskId;
+              if (tid && taskMap.has(tid)) {
+                const t = taskMap.get(tid);
+                if (block.input?.status) t.status = block.input.status;
+                if (block.input?.subject) t.subject = block.input.subject;
+              }
             } else {
               const target = extractTarget(block.name, block.input);
               toolMap.set(block.id, { id: block.id, name: block.name, target, status: 'running', startTime: ts });
@@ -160,16 +175,36 @@ function parseTranscript(transcriptPath) {
             if (tool) { tool.status = block.is_error ? 'error' : 'completed'; tool.endTime = ts; }
             const agent = agentMap.get(block.tool_use_id);
             if (agent) { agent.status = 'completed'; agent.endTime = ts; }
+            // TaskCreate result: extract real task ID and replace pending entry
+            const pendingKey = `_pending_${block.tool_use_id}`;
+            if (taskMap.has(pendingKey)) {
+              const pending = taskMap.get(pendingKey);
+              // Parse task ID from result text (e.g. "Task created with id: 3")
+              const content = Array.isArray(block.content) ? block.content.map(c => c.text ?? '').join('') : (typeof block.content === 'string' ? block.content : '');
+              const idMatch = content.match(/id:\s*(\S+)/i);
+              if (idMatch) {
+                const realId = idMatch[1];
+                taskMap.delete(pendingKey);
+                taskMap.set(realId, { ...pending, id: realId });
+              }
+            }
           }
         }
       } catch { /* skip malformed */ }
     }
   } catch { /* partial */ }
 
+  // Merge todos: prefer modern TaskCreate system, fallback to legacy TodoWrite
+  const taskEntries = Array.from(taskMap.values()).filter(t => t.status !== 'deleted');
+  const mergedTodos = taskEntries.length > 0
+    ? taskEntries.map(t => ({ status: t.status, subject: t.subject, content: t.subject }))
+    : latestTodos;
+
   const result = {
     tools: Array.from(toolMap.values()).slice(-20),
     agents: Array.from(agentMap.values()).slice(-10),
-    todos: latestTodos,
+    todos: mergedTodos,
+    _tasks: taskEntries,  // Preserve raw task state for cache restoration
     sessionStart,
   };
 
