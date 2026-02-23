@@ -79,15 +79,18 @@ configure_settings() {
   local cmd="$node_path $INSTALL_DIR/statusline.mjs"
 
   if [[ -f "$SETTINGS" ]]; then
-    # Check if statusLine already configured
+    # Skip if statusLine already configured with the same command
     local current
     current=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null || echo "")
-    if [[ "$current" == "$cmd" ]] && [[ "$IS_UPDATE" == "true" ]]; then
+    if [[ "$current" == "$cmd" ]]; then
       info "statusLine already configured, skipping"
       return
     fi
 
-    cp "$SETTINGS" "$SETTINGS.bak"
+    # Only backup if this is the first modification (preserve original)
+    if [[ ! -f "$SETTINGS.bak" ]]; then
+      cp "$SETTINGS" "$SETTINGS.bak"
+    fi
     jq --arg cmd "$cmd" '.statusLine = {"type":"command","command":$cmd}' \
       "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
     ok "settings.json updated (backup: settings.json.bak)"
