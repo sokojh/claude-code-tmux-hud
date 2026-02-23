@@ -254,7 +254,7 @@ render() {
           P "${DIM}${idx}|${RST} ${op} ${WHT}$(trunc "$fname" 18)${RST} ${DIM}${ago}${RST}"
         done
       }
-      P "${DIM}Ctrl-b u → undo last${RST}"
+      P "${DIM}Ctrl-b u → 되돌리기${RST}"
     fi
   fi
 

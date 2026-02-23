@@ -52,11 +52,11 @@ if [[ -f "$SETTINGS" ]] && command -v jq &>/dev/null; then
     changed=true
   fi
 
-  # Remove our checkpoint hook from PreToolUse
+  # Remove our checkpoint hook from PreToolUse (new format: nested hooks array)
   if jq -e '.hooks.PreToolUse' "$SETTINGS" &>/dev/null; then
-    jq '.hooks.PreToolUse = [.hooks.PreToolUse[] | select(.command | contains("checkpoint.sh") | not)]' \
+    jq '.hooks.PreToolUse = [.hooks.PreToolUse[] | select(.hooks // [] | any(.command | contains("checkpoint.sh")) | not)]' \
       "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-    # Clean up empty hooks
+    # Clean up empty arrays/objects
     jq 'if .hooks.PreToolUse == [] then del(.hooks.PreToolUse) else . end | if .hooks == {} then del(.hooks) else . end' \
       "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
     changed=true
