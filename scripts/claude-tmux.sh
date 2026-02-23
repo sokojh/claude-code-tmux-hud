@@ -140,6 +140,9 @@ fi
 # Split: right pane for dashboard
 tmux split-window -h -l "$PANEL_WIDTH" -t "$SESSION_NAME"
 
+# Right pane (index 1): no scrollback (prevents scroll chaos on HUD)
+tmux set-option -t "$SESSION_NAME:0.1" -p history-limit 0
+
 # Right pane (index 1): start dashboard with panel ID
 tmux send-keys -t "$SESSION_NAME:0.1" "export CLAUDE_PANEL_ID='$SESSION_NAME' && $PANEL_SCRIPT" Enter
 
