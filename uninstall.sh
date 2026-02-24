@@ -25,7 +25,7 @@ if (( active > 0 )); then
 fi
 
 # 2. Remove scripts (files only, preserve directory)
-for f in statusline.mjs tmux-panel.sh claude-tmux.sh checkpoint.sh undo.sh session-picker.mjs; do
+for f in statusline.mjs tmux-panel.sh claude-tmux.sh session-picker.mjs; do
   if [[ -f "$INSTALL_DIR/$f" ]]; then
     rm -f "$INSTALL_DIR/$f"
     ok "Removed $f"
@@ -42,28 +42,13 @@ fi
 rm -f /tmp/claude-panel-*.json /tmp/claude-statusline-cache.json /tmp/claude-git-cache.json 2>/dev/null
 ok "Removed temp files"
 
-# 4. Remove statusLine and hooks from settings.json (preserve other keys)
+# 4. Remove statusLine from settings.json (preserve other keys)
 if [[ -f "$SETTINGS" ]] && command -v jq &>/dev/null; then
-  changed=false
   cp "$SETTINGS" "$SETTINGS.pre-uninstall.bak"
 
   if jq -e '.statusLine' "$SETTINGS" &>/dev/null; then
     jq 'del(.statusLine)' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-    changed=true
-  fi
-
-  # Remove our checkpoint hook from PreToolUse (new format: nested hooks array)
-  if jq -e '.hooks.PreToolUse' "$SETTINGS" &>/dev/null; then
-    jq '.hooks.PreToolUse = [.hooks.PreToolUse[] | select(.hooks // [] | any(.command | contains("checkpoint.sh")) | not)]' \
-      "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-    # Clean up empty arrays/objects
-    jq 'if .hooks.PreToolUse == [] then del(.hooks.PreToolUse) else . end | if .hooks == {} then del(.hooks) else . end' \
-      "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-    changed=true
-  fi
-
-  if [[ "$changed" == "true" ]]; then
-    ok "Removed statusLine and hooks from settings.json (backup: .pre-uninstall.bak)"
+    ok "Removed statusLine from settings.json (backup: .pre-uninstall.bak)"
   fi
 fi
 rm -f "$SETTINGS.bak" 2>/dev/null

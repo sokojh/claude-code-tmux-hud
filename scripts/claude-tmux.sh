@@ -217,12 +217,6 @@ tmux bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cance
 # Set session-level env var for isolation
 tmux set-environment -t "$SESSION_NAME" CLAUDE_PANEL_ID "$SESSION_NAME"
 
-# Keybinding: Ctrl-b u → undo last change
-UNDO_SCRIPT="$SCRIPT_DIR/undo.sh"
-if [[ -x "$UNDO_SCRIPT" ]]; then
-  tmux bind-key -T prefix u run-shell "$UNDO_SCRIPT"
-fi
-
 # Split: right pane for dashboard
 tmux split-window -h -l "$PANEL_WIDTH" -t "$SESSION_NAME"
 
