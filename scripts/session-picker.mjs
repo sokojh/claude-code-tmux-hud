@@ -65,6 +65,19 @@ function projectNameFromPath(cwdPath) {
   return last;
 }
 
+// ── Worktree Detection ──────────────────────────────────────
+function detectWorktree(projectPath) {
+  if (!projectPath) return null;
+  const marker = '/.claude/worktrees/';
+  const idx = projectPath.indexOf(marker);
+  if (idx >= 0) {
+    const rest = projectPath.slice(idx + marker.length);
+    const name = rest.split('/')[0];
+    return name || null;
+  }
+  return null;
+}
+
 // ── Clean Description ───────────────────────────────────────
 function cleanDescription(text) {
   if (!text) return null;
@@ -157,6 +170,7 @@ function scanFromHistory() {
       modified: s.modified,
       gitBranch,
       projectName: projectNameFromPath(s.projectPath),
+      worktreeName: detectWorktree(s.projectPath),
     });
   }
 
@@ -220,26 +234,28 @@ function readGitBranch(filePath) {
 
 // ── Fuzzy Matcher ───────────────────────────────────────────
 function fuzzyMatch(query, text) {
-  if (!query || !text) return { match: !query, score: 0 };
+  if (!query || !text) return { match: !query, score: 0, positions: [] };
   const lq = query.toLowerCase(), lt = text.toLowerCase();
   let qi = 0, score = 0, lastIdx = -2;
+  const positions = [];
   for (let ti = 0; ti < lt.length && qi < lq.length; ti++) {
     if (lt[ti] === lq[qi]) {
       if (ti === lastIdx + 1) score += 3;
       if (ti === 0 || /[\s\-_/.]/.test(lt[ti - 1])) score += 5;
       if (text[ti] === query[qi]) score += 1;
+      positions.push(ti);
       lastIdx = ti; qi++;
     }
   }
-  if (qi < lq.length) return { match: false, score: 0 };
+  if (qi < lq.length) return { match: false, score: 0, positions: [] };
   score += Math.max(0, 50 - text.length);
-  return { match: true, score };
+  return { match: true, score, positions };
 }
 
 function matchEntry(query, s) {
   if (!query) return { match: true, score: 0 };
   let best = -1;
-  for (const f of [s.summary, s.firstPrompt, s.projectName, s.gitBranch]) {
+  for (const f of [s.summary, s.firstPrompt, s.projectName, s.gitBranch, s.worktreeName]) {
     if (!f) continue;
     const r = fuzzyMatch(query, f);
     if (r.match && r.score > best) best = r.score;
@@ -333,6 +349,35 @@ function padR(s, w) {
   return vl < w ? s + ' '.repeat(w - vl) : s;
 }
 
+// Render text with fuzzy match highlights, CJK-aware truncation
+function renderHighlight(text, maxW, positions, baseColor, hlColor) {
+  if (!text || maxW <= 0) return '';
+  const clean = text.replace(/[\r\n\t]+/g, ' ');
+  const posSet = new Set(positions || []);
+
+  if (!posSet.size) return `${baseColor}${truncS(clean, maxW)}${RST}`;
+
+  const totalW = strW(clean);
+  const needsTrunc = totalW > maxW;
+  const limit = needsTrunc ? (maxW <= 2 ? 0 : maxW - 2) : maxW;
+  if (limit <= 0) return maxW > 0 ? '.'.repeat(maxW) : '';
+
+  let w = 0, out = baseColor, inHl = false, ci = 0;
+  for (const ch of clean) {
+    const cw = charW(ch.codePointAt(0));
+    if (w + cw > limit) break;
+    const hl = posSet.has(ci);
+    if (hl && !inHl) { out += hlColor; inHl = true; }
+    else if (!hl && inHl) { out += RST + baseColor; inHl = false; }
+    out += ch;
+    w += cw; ci++;
+  }
+  if (inHl) out += RST + baseColor;
+  if (needsTrunc) out += '..';
+  out += RST;
+  return out;
+}
+
 // ── TUI ─────────────────────────────────────────────────────
 class SessionPicker {
   constructor(sessions, initialQuery) {
@@ -423,15 +468,10 @@ class SessionPicker {
   }
 
   renderRow(s, isCur, w) {
-    // Layout: [ptr 2] [project projW] [space 1] [desc flex] [space 2] [branch?] [time timeW] [margin 1]
-    // All widths are display columns (CJK = 2)
-    const usable = w - 1; // leave 1 col margin to prevent wrap
-
-    // Pointer
+    const usable = w - 1;
     const ptr = isCur ? `${B_CYN}> ${RST}` : '  ';
     const ptrW = 2;
 
-    // Time + message count (fixed right side)
     const { rel, date } = fmtTime(s.modified);
     const msgTag = s.messageCount > 0 ? `${s.messageCount}msg` : '';
     const timePlain = msgTag
@@ -439,34 +479,55 @@ class SessionPicker {
       : `${rel.padStart(3)} \u00b7 ${date}`;
     const timeW = strW(timePlain);
 
-    // Branch
+    // Branch or worktree
     const branchMax = 18;
-    const branchRaw = s.gitBranch ? truncS(s.gitBranch, branchMax) : '';
-    const branchW = branchRaw ? strW(branchRaw) + 2 : 0; // +2 for "  " separator
+    let branchLabel = '';
+    let branchColor = GRN;
+    if (s.worktreeName) {
+      branchLabel = 'wt:' + truncS(s.worktreeName, branchMax - 3);
+      branchColor = CYN;
+    } else if (s.gitBranch) {
+      branchLabel = truncS(s.gitBranch, branchMax);
+    }
+    const branchW = branchLabel ? strW(branchLabel) + 2 : 0;
 
-    // Project name
     const projMax = Math.min(20, Math.floor(usable * 0.16));
-    const projRaw = truncS(s.projectName || '~', projMax);
-    const projW = Math.max(projMax, strW(projRaw)); // use max to keep column aligned
+    const projText = s.projectName || '~';
 
-    // Description: fill remaining space
     const fixedW = ptrW + projMax + 1 + 2 + branchW + timeW;
     const descAvail = Math.max(8, usable - fixedW);
     const descText = s.summary || s.firstPrompt || '';
-    const descRaw = truncS(descText, descAvail);
 
-    // Format with colors
-    const projFmt = isCur
-      ? padR(`${WHT}${BOLD}${projRaw}${RST}`, projMax)
-      : padR(`${YLW}${projRaw}${RST}`, projMax);
+    // Fuzzy match positions for highlighting
+    const q = this.query;
+    const HL = `${YLW}${BOLD}`;
+    const projPos = q ? fuzzyMatch(q, projText).positions : [];
+    const descPos = q ? fuzzyMatch(q, descText).positions : [];
+    const brPos = q && branchLabel ? fuzzyMatch(q, branchLabel).positions : [];
 
-    const descFmt = isCur
-      ? padR(`${WHT}${descRaw}${RST}`, descAvail)
-      : padR(`${DIM}${descRaw}${RST}`, descAvail);
+    // Project name
+    const projFmt = projPos.length > 0
+      ? padR(renderHighlight(projText, projMax, projPos, isCur ? WHT + BOLD : YLW, HL), projMax)
+      : isCur
+        ? padR(`${WHT}${BOLD}${truncS(projText, projMax)}${RST}`, projMax)
+        : padR(`${YLW}${truncS(projText, projMax)}${RST}`, projMax);
 
-    const branchFmt = branchRaw ? `${GRN}${branchRaw}${RST}  ` : '';
+    // Description
+    const descFmt = descPos.length > 0
+      ? padR(renderHighlight(descText, descAvail, descPos, isCur ? WHT : DIM, HL), descAvail)
+      : isCur
+        ? padR(`${WHT}${truncS(descText, descAvail)}${RST}`, descAvail)
+        : padR(`${DIM}${truncS(descText, descAvail)}${RST}`, descAvail);
+
+    // Branch / worktree
+    let branchFmt = '';
+    if (branchLabel) {
+      branchFmt = brPos.length > 0
+        ? renderHighlight(branchLabel, branchMax, brPos, branchColor, HL) + '  '
+        : `${branchColor}${branchLabel}${RST}  `;
+    }
+
     const timeFmt = `${DIM}${timePlain}${RST}`;
-
     return `${ptr}${projFmt} ${descFmt}  ${branchFmt}${timeFmt}`;
   }
 

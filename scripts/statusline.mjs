@@ -99,7 +99,7 @@ function saveParseCache(data) {
 }
 
 function parseTranscript(transcriptPath) {
-  const empty = { tools: [], agents: [], todos: [], sessionStart: null };
+  const empty = { tools: [], agents: [], todos: [], sessionStart: null, planMode: null };
   if (!transcriptPath || !fs.existsSync(transcriptPath)) return empty;
 
   let stat;
@@ -119,6 +119,9 @@ function parseTranscript(transcriptPath) {
   const taskMap = new Map();       // TaskCreate/TaskUpdate system (modern)
   let latestTodos = [];            // TodoWrite system (legacy fallback)
   let sessionStart = null;
+  let planMode = null;             // { active: boolean, slug: string|null, phase: 'planning'|'implementing' }
+  let slug = null;
+  const planToolIds = new Set();   // track EnterPlanMode/ExitPlanMode tool_use IDs
 
   // Restore previous state if incremental
   if (prevOffset > 0 && cache?.result) {
@@ -128,6 +131,9 @@ function parseTranscript(transcriptPath) {
     latestTodos = cache.result.todos || [];
     // Restore task map from cached _tasks
     for (const t of (cache.result._tasks || [])) taskMap.set(t.id, t);
+    // Restore plan mode state
+    planMode = cache.result.planMode || null;
+    slug = cache.result._slug || null;
   }
 
   try {
@@ -144,12 +150,20 @@ function parseTranscript(transcriptPath) {
         const entry = JSON.parse(line);
         const ts = entry.timestamp ? new Date(entry.timestamp) : new Date();
         if (!sessionStart && entry.timestamp) sessionStart = ts;
+        if (entry.slug) slug = entry.slug;
         const content = entry.message?.content;
         if (!content || !Array.isArray(content)) continue;
 
         for (const block of content) {
           if (block.type === 'tool_use' && block.id && block.name) {
-            if (block.name === 'Task') {
+            if (block.name === 'EnterPlanMode') {
+              planMode = { active: true, slug, phase: 'planning' };
+              planToolIds.add(block.id);
+            } else if (block.name === 'ExitPlanMode') {
+              // Plan submitted for approval; still active until tool_result confirms
+              if (!planMode) planMode = { active: true, slug, phase: 'planning' };  // infer plan mode if not seen EnterPlanMode
+              planToolIds.add(block.id);
+            } else if (block.name === 'Task') {
               agentMap.set(block.id, { id: block.id, type: block.input?.subagent_type ?? 'unknown', model: block.input?.model, description: block.input?.description, status: 'running', startTime: ts });
             } else if (block.name === 'TodoWrite') {
               if (block.input?.todos && Array.isArray(block.input.todos)) latestTodos = [...block.input.todos];
@@ -171,6 +185,20 @@ function parseTranscript(transcriptPath) {
             }
           }
           if (block.type === 'tool_result' && block.tool_use_id) {
+            // Plan mode state transitions
+            if (planToolIds.has(block.tool_use_id)) {
+              if (!block.is_error) {
+                // EnterPlanMode approved → already set active
+                // ExitPlanMode approved → plan accepted, leaving plan mode
+                if (planMode?.active) {
+                  const resultText = Array.isArray(block.content) ? block.content.map(c => c.text ?? '').join('') : (typeof block.content === 'string' ? block.content : '');
+                  if (!resultText.includes('Entered plan mode')) {
+                    planMode = { active: true, slug, phase: 'implementing' };
+                  }
+                }
+              }
+              // ExitPlanMode rejected → stay in plan mode (is_error=true)
+            }
             const tool = toolMap.get(block.tool_use_id);
             if (tool) { tool.status = block.is_error ? 'error' : 'completed'; tool.endTime = ts; }
             const agent = agentMap.get(block.tool_use_id);
@@ -206,6 +234,8 @@ function parseTranscript(transcriptPath) {
     todos: mergedTodos,
     _tasks: taskEntries,  // Preserve raw task state for cache restoration
     sessionStart,
+    planMode,
+    _slug: slug,
   };
 
   // Save cache with new offset
@@ -521,6 +551,26 @@ function renderAgents(tr) {
   }).join('\n');
 }
 
+function readPlanTitle(slug) {
+  if (!slug) return null;
+  const fp = path.join(HOME, '.claude', 'plans', `${slug}.md`);
+  try {
+    if (!fs.existsSync(fp)) return null;
+    const head = fs.readFileSync(fp, 'utf8').slice(0, 500);
+    const m = head.match(/^#\s+(.+)/m);
+    return m ? m[1].trim() : null;
+  } catch { return null; }
+}
+
+function renderPlanMode(tr) {
+  if (!tr.planMode?.active) return null;
+  const title = readPlanTitle(tr.planMode.slug);
+  const phase = tr.planMode.phase === 'implementing' ? 'Impl' : 'Plan';
+  const icon = tr.planMode.phase === 'implementing' ? '\u{1F6A7}' : '\u{1F4CB}';
+  if (title) return `${B_MAG}${icon}${RST} ${magenta(phase)} ${title.slice(0, 36)}${title.length > 36 ? '...' : ''}`;
+  return `${B_MAG}${icon}${RST} ${magenta(phase + ' Mode')}`;
+}
+
 function renderTodos(tr) {
   if (!tr.todos.length) return null;
   const done = tr.todos.filter(t => t.status === 'completed').length;
@@ -552,6 +602,7 @@ async function main() {
     const id = renderIdentity(stdin, usage, dur); if (id) lines.push(id);
     const pr = renderProject(stdin, gitStatus);   if (pr) lines.push(pr);
     const en = renderEnv(configs);                if (en) lines.push(en);
+    const pm = renderPlanMode(transcript);        if (pm) lines.push(pm);
     const tl = renderTools(transcript);           if (tl) lines.push(tl);
     const ag = renderAgents(transcript);          if (ag) lines.push(ag);
     const td = renderTodos(transcript);           if (td) lines.push(td);
@@ -567,6 +618,7 @@ async function main() {
         tools: transcript.tools.map(t => ({ name: t.name, status: t.status, target: t.target })),
         agents: transcript.agents.map(a => ({ type: a.type, model: a.model, description: a.description, status: a.status, startTime: a.startTime, endTime: a.endTime })),
         todos: transcript.todos,
+        planMode: transcript.planMode,
         sessionStart: transcript.sessionStart,
         gitStatus, configs, usage, duration: dur,
         contextPercent: getContextPercent(stdin),

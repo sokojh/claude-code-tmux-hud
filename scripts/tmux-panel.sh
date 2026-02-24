@@ -78,24 +78,23 @@ render() {
   (( avail < 5 )) && avail=5
 
   # Distribute available lines among variable sections
-  local LIM_TODO LIM_MCP LIM_TOOLS LIM_CHANGES LIM_AGENTS
+  local LIM_TODO LIM_MCP LIM_CHANGES LIM_AGENTS
   if (( avail >= 30 )); then
     # Full mode
-    LIM_TODO=6; LIM_MCP=6; LIM_TOOLS=5; LIM_CHANGES=6; LIM_AGENTS=4
+    LIM_TODO=6; LIM_MCP=6; LIM_CHANGES=6; LIM_AGENTS=4
   elif (( avail >= 20 )); then
     # Compact mode
-    LIM_TODO=4; LIM_MCP=3; LIM_TOOLS=3; LIM_CHANGES=4; LIM_AGENTS=2
+    LIM_TODO=4; LIM_MCP=3; LIM_CHANGES=4; LIM_AGENTS=2
   elif (( avail >= 12 )); then
     # Minimal mode
-    LIM_TODO=2; LIM_MCP=0; LIM_TOOLS=2; LIM_CHANGES=2; LIM_AGENTS=0
+    LIM_TODO=2; LIM_MCP=0; LIM_CHANGES=2; LIM_AGENTS=0
   else
     # Ultra-compact
-    LIM_TODO=1; LIM_MCP=0; LIM_TOOLS=1; LIM_CHANGES=1; LIM_AGENTS=0
+    LIM_TODO=1; LIM_MCP=0; LIM_CHANGES=1; LIM_AGENTS=0
   fi
 
   printf "\n"
-  P "${BOLD}${CYN}Claude Code HUD${RST}"
-  P "${DIM}$(date '+%H:%M:%S')${RST}"
+  P "${BOLD}${CYN}Claude Code Tmux Hud${RST}"
 
   # -- Session
   if [[ ! -f "$STATE_FILE" ]] || [[ ! -s "$STATE_FILE" ]]; then
@@ -186,6 +185,32 @@ render() {
     done
   fi
 
+  # -- Plan Mode
+  local plan_active
+  plan_active=$(panel 'planMode.active // false')
+  if [[ "$plan_active" == "true" ]]; then
+    local plan_slug plan_title=""
+    plan_slug=$(panel 'planMode.slug // ""')
+    if [[ -n "$plan_slug" && "$plan_slug" != "null" ]]; then
+      local plan_file="$HOME/.claude/plans/${plan_slug}.md"
+      if [[ -f "$plan_file" ]]; then
+        plan_title=$(head -1 "$plan_file" | sed 's/^#\s*//')
+      fi
+    fi
+    local plan_phase
+    plan_phase=$(panel 'planMode.phase // "planning"')
+    if [[ "$plan_phase" == "implementing" ]]; then
+      H "Implementing"
+    else
+      H "Plan Mode"
+    fi
+    if [[ -n "$plan_title" ]]; then
+      P "${MAG}$(trunc "$plan_title" 30)${RST}"
+    else
+      P "${MAG}Planning...${RST}"
+    fi
+  fi
+
   # -- Repository
   H "Repository"
   local branch
@@ -231,28 +256,6 @@ render() {
     else
       P "${DIM}None${RST}"
     fi
-  fi
-
-  # -- Tools
-  H "Tools"
-  local running
-  running=$(panel '[tools[] | select(.status == "running")] | .[:'$LIM_TOOLS'][] | .name' 2>/dev/null)
-  if [[ -n "$running" ]]; then
-    while IFS= read -r name; do
-      [[ -z "$name" || "$name" == "null" ]] && continue
-      P "${YLW}>${RST} ${CYN}${name}${RST}"
-    done <<< "$running"
-  fi
-
-  local tool_data
-  tool_data=$(panel '[tools[] | select(.status != "running")] | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count) | .[:'$LIM_TOOLS'][] | "\(.name)\t\(.count)"' 2>/dev/null)
-  if [[ -n "$tool_data" ]]; then
-    while IFS=$'\t' read -r name count; do
-      [[ -z "$name" ]] && continue
-      P "${GRN}v${RST} ${name} ${DIM}x${count}${RST}"
-    done <<< "$tool_data"
-  elif [[ -z "$running" ]]; then
-    P "${DIM}No activity${RST}"
   fi
 
   # -- Changes (undo stack)

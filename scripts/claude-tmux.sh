@@ -208,6 +208,12 @@ tmux new-session -d -s "$SESSION_NAME" -x "$(tput cols)" -y "$(tput lines)"
 # Enable mouse mode (scroll, pane select, resize)
 tmux set-option -t "$SESSION_NAME" mouse on
 
+# Mouse drag → copy-mode → auto-copy to system clipboard on release
+# (Hold Shift while dragging for native terminal selection)
+tmux set-option -t "$SESSION_NAME" set-clipboard off
+tmux bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel "pbcopy"
+tmux bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel "pbcopy"
+
 # Set session-level env var for isolation
 tmux set-environment -t "$SESSION_NAME" CLAUDE_PANEL_ID "$SESSION_NAME"
 
